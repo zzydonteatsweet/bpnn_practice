@@ -1,0 +1,264 @@
+/*
+简单bp神经网络用c++书写。在b站上学完之后自己手动写了一个
+*/
+
+#include<iostream>
+#include<cmath>
+#include<vector>
+#include<fstream>
+#include<random>
+
+#define InNode 2
+#define HidenNode 4
+#define OutPutNode 1
+
+double rate=0.4;
+double MostTrainTimes=1e6;
+double threshold=1e-4;
+
+struct Sample{
+    std::vector<double> in,out;
+   
+};
+
+struct Node{
+    double value{},bias{},bias_delta{};
+    std::vector<double> weight,weight_delta;
+};
+
+namespace utils{
+    inline double sigmod(double x){
+        return 1/(1.0+std::exp(-x));
+    }
+
+    std::vector<double> getFileData(std::string filename){
+        std:: vector<double> res;
+        std::ifstream in(filename);
+        if(in.is_open()){
+            while(!in.eof() ){
+                double buffer;
+                in >> buffer;
+                res.push_back(buffer);
+            }
+            in.close();
+        }else{
+            std::cout <<" Wrong with opening " << filename << std::endl;
+        }
+        return res;
+    }
+
+    std::vector<Sample> getTrainData(std::string filename){
+        std::vector<Sample> res;
+        std::vector<double> buffer=getFileData(filename);
+        for (int i=0;i<buffer.size();i+=InNode+OutPutNode){
+            Sample tmp;
+            for(int j=0;j<InNode;j++){
+                tmp.in.push_back(buffer[i+j]);
+            }
+            for(int j=0;j<OutPutNode;j++){
+                tmp.out.push_back(buffer[i+InNode+j]);
+            }
+            res.push_back(tmp);
+        }
+        return res;
+    }
+
+    std::vector<Sample> getTestData(std::string filename){
+        std::vector<Sample> res;
+        std::vector<double> buffer=getFileData(filename);
+        for(int i=0;i<buffer.size();i+=InNode){
+            Sample tmp;
+            for(int j=0;j<InNode;j++){
+                tmp.in.push_back(buffer[i+j+InNode]);
+            }
+            res.push_back(tmp);
+        }
+        return res;
+    }
+}
+Node *InputNode[InNode],*HideNode[HidenNode],*OutNode[OutPutNode];
+void init(){
+    std::mt19937 rd(std::random_device{}());
+    std::uniform_real_distribution<double> rng(-1.1);
+    for(int i=0;i<InNode;i++){
+        InputNode[i]=new Node();
+        for(int j=0;j<HidenNode;j++){
+            ::InputNode[i]->weight.push_back(rng(rd));
+            ::InputNode[i]->weight_delta.push_back(0.f);
+        }
+    }
+    for(int i=0;i<HidenNode;i++){
+        ::HideNode[i]=new Node();
+        ::HideNode[i]->bias=rng(rd);
+        for(int j=0;j<OutPutNode;j++){
+            ::HideNode[i]->weight.push_back(rng(rd));
+            ::HideNode[i]->weight_delta.push_back(0.f);
+        }
+    }
+    for(int i=0;i<OutPutNode;i++){
+        OutNode[i]=new Node();
+        OutNode[i]->bias=rng(rd);
+    }
+}
+
+void rest_delta(){
+    for(int i=0;i<InNode;i++){
+        int size=::InputNode[i]->weight_delta.size();
+        ::InputNode[i]->weight_delta.assign(size,0.f);
+    }
+
+    for(int i=0;i<HidenNode;i++){
+        ::HideNode[i]->bias_delta=0;
+        int size=::HideNode[i]->weight_delta.size();
+        ::HideNode[i]->weight_delta.assign(size,0.f);
+    }
+    
+    for(int i=0;i<OutPutNode;i++){
+        OutNode[i]->bias_delta=0.f;
+    }
+}
+int main(){
+    init();
+    std::vector<Sample> idx;
+    idx=utils::getTrainData("traindata.txt");
+    double error_max=0;
+    size_t times=0;
+    for(times=0;times<MostTrainTimes;times++){
+        rest_delta();
+        error_max=0.f;
+        for(size_t i=0;i<idx.size();i++){
+            //  将输入放入对应数组中
+            for(size_t j=0;j<InNode;j++){
+                ::InputNode[j]->value=idx[i].in[j];
+            }
+
+            //  正向传播
+            for(size_t k=0;k<HidenNode;k++){//  求隐藏层的植
+                double sum=0;
+                for(int j=0;j<InNode;j++){
+                    sum+=InputNode[j]->weight[k]*InputNode[j]->value;
+                }
+                sum-=HideNode[k]->bias;
+                ::HideNode[k]->value=utils::sigmod(sum);
+            }
+
+            for(size_t k=0;k<OutPutNode;k++){//  求输出层的值
+                double sum=0;
+                for(size_t j=0;j<HidenNode;j++){
+                    sum+=HideNode[j]->value*HideNode[j]->weight[k];
+                }
+                sum-=::OutNode[k]->bias;
+                ::OutNode[k]->value=utils::sigmod(sum);
+            }
+                //  计算误差
+            double error=0.f;
+            size_t size=idx.size();
+
+            for(int j=0;j<OutPutNode;j++) {
+                double tmp=std::fabs(idx[i].out[j]-OutNode[j]->value);
+                error+=tmp*tmp/2;
+                        
+            }
+            
+            error_max=std::max(error_max,error);
+            //  反向传播
+            
+            for(size_t j=0;j<OutPutNode;j++){
+                double bias_delta=-(idx[i].out[j]-::OutNode[j]->value) *
+                OutNode[j]->value*(1.0-::OutNode[j]->value);
+                OutNode[j]->bias_delta+=bias_delta;
+            }
+
+            for(size_t j=0;j<HidenNode;j++){
+                for(size_t k=0;k<OutPutNode;k++){
+                    double weight_delta=(idx[i].out[k]-::OutNode[k]->value) *
+                    OutNode[k]->value*(1.0-::OutNode[k]->value)*HideNode[j]->value;
+                    ::HideNode[j]->weight_delta[k]+=weight_delta;
+                }
+            }
+
+            for (size_t j=0;j<HidenNode;j++){
+                double bias_delta=0.f;
+                for(size_t k=0;k<OutPutNode;k++){
+                    bias_delta+=-(idx[i].out[k]-OutNode[k]->value) *
+                    ::OutNode[k]->value*(1.0-::OutNode[k]->value)*
+                    ::HideNode[j]->weight[k];
+                }
+                HideNode[j]->bias_delta+=bias_delta*::HideNode[j]->value*(1.0-::HideNode[j]->value);
+            }
+
+            for(size_t j=0;j<InNode;j++){
+                for(size_t k=0;k<HidenNode;k++){
+                    double sum=0.f;
+                    for(size_t m=0;m<OutPutNode;m++){
+                        sum+=(idx[i].out[m]-OutNode[m]->value)*OutNode[m]->value*(1-OutNode[m]->value)
+                        * ::HideNode[k]->weight[m];
+                    }
+                    ::InputNode[j]->weight_delta[k]+=sum*::HideNode[k]->value*(1-HideNode[k]->value)*InputNode[j]->value;
+                }
+            }
+        }
+
+        if(error_max<threshold){
+            std::cout << "YE5 at" <<"times in " << times+1 << std::endl;
+            break;
+        }
+
+        //  对值进行更改
+        size_t size=idx.size();
+        for(size_t i=0;i<OutPutNode;i++){
+            ::OutNode[i]->bias+=rate*::OutNode[i]->bias_delta/size;
+        }
+
+        for(size_t i=0;i<HidenNode;i++){
+            for(size_t j=0;j<OutPutNode;j++){
+                ::HideNode[i]->weight[j]+=rate*::HideNode[i]->weight_delta[j]/size;
+            }
+            ::HideNode[i]->bias+=rate*::HideNode[i]->bias_delta/size;
+        }
+
+        for(size_t i=0;i<InNode;i++){
+            for(size_t j=0;j<HidenNode;j++){
+                ::InputNode[i]->weight[j]+=rate*::InputNode[i]->weight_delta[j]/size;
+            }
+        }
+    }
+
+    
+    std::vector<Sample> testdata=utils::getTestData("testdata.txt");
+
+    //  进行测试
+
+    for(auto &idx:testdata){
+        for(int i=0;i<InNode;i++){
+            ::InputNode[i]->value=idx.in[i];
+        }
+
+        for(size_t i=0;i<HidenNode;i++){
+            double sum=0.f;
+            for(size_t j=0;j<InNode;j++){
+                sum+=::InputNode[j]->weight[i]*::InputNode[j]->value;
+            }
+            sum-=::HideNode[i]->bias;
+            ::HideNode[i]->value=utils::sigmod(sum);
+        }
+
+        for(size_t i=0;i<OutPutNode;i++){
+            double sum=0.f;
+            for(size_t j=0;j<HidenNode;j++){
+                sum+=::HideNode[j]->weight[i]*::HideNode[j]->value;
+            }
+            sum-=OutNode[i]->bias;
+            ::OutNode[i]->value=utils::sigmod(sum);
+            idx.out.push_back(::OutNode[i]->value);
+        }
+        for(auto & x:idx.in){
+            std:: cout << x << " ";
+        }
+        for(auto &x:idx.out){
+            std:: cout << x << " ";
+        }
+        puts("");
+
+    }
+}
